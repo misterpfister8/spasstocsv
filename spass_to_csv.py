@@ -5,7 +5,7 @@ Samsung Pass to CSV Converter
 Decrypts Samsung Pass (.spass) export files and converts them to CSV format.
 Compatible with most password managers including Bitwarden, 1Password, and Chrome.
 
-Author: https://github.com/yourusername/spass-to-csv
+Author: https://github.com/misterpfister8/spass-to-csv
 License: MIT
 """
 
