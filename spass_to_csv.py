@@ -234,13 +234,17 @@ class CSVExporter:
     """Export parsed data to CSV format"""
     
     @staticmethod
-    def export_to_csv(entries: List[Dict[str, str]], output_path: str):
+    def export_to_csv(entries: List[Dict[str, str]], output_path: str, format_choice: str):
         """
         Export password entries to CSV file.
         
         Args:
             entries: List of password entry dictionaries
             output_path: Path for output CSV file
+            format_choice: Output format choice
+                           '1' - Raw CSV
+                           '2' - Chrome CSV
+                           '3' - Proton Pass CSV
         """
         if not entries:
             print("Warning: No entries to export")
@@ -250,6 +254,48 @@ class CSVExporter:
         all_headers = set()
         for entry in entries:
             all_headers.update(entry.keys())
+
+        # If Chrome format selected
+        if format_choice == '2':
+            # Chrome CSV format
+            header_mapping = {
+                'host_url': 'url',
+                'username_value': 'username',
+                'password_value': 'password',
+                'origin_url': 'formActionOrigin',
+                'created_time': 'timeCreated',
+                'modified_time': 'timePasswordChanged'
+            }
+
+            # Remap headers
+            for entry in entries:
+                for old_key, new_key in header_mapping.items():
+                    if old_key in entry:
+                        entry[new_key] = entry.pop(old_key)
+
+            all_headers.clear()
+            all_headers.update(header_mapping.values())
+        
+        # If Proton Pass format selected
+        elif format_choice == '3':
+            # Map Samsung Pass headers to Chrome compatible headers
+            header_mapping = {
+                'title': 'name',
+                'host_url': 'url',
+                'username_value': 'username',
+                'password_value': 'password',
+                'otp': 'totp',
+                'credential_memo': 'note'
+            }
+
+            # Remap headers
+            for entry in entries:
+                for old_key, new_key in header_mapping.items():
+                    if old_key in entry:
+                        entry[new_key] = entry.pop(old_key)
+
+            all_headers.clear()
+            all_headers.update(header_mapping.values())
         
         # Prioritize common headers
         priority = ['name', 'url', 'username', 'password', 'email', 'notes', 'otp']
@@ -290,7 +336,17 @@ def main():
     custom_output = input(f"Output file (default: {output_file}): ").strip()
     if custom_output:
         output_file = custom_output
-    
+
+    # Choose output file format
+    format_choice = input("Choose output format - (1) Raw CSV (default), (2) Chrome CSV (3) Proton Pass CSV: ").strip()
+    if format_choice not in ['1', '2', '3', '']:
+        print("Error: Invalid choice")
+        sys.exit(1)
+
+    # Default to Raw CSV if no choice made
+    if not format_choice:
+        format_choice = '1'   
+
     print()
     print("Processing...")
     print("-" * 70)
@@ -309,7 +365,7 @@ def main():
         
         # Export
         print("\nStep 3/3: Exporting...")
-        CSVExporter.export_to_csv(entries, output_file)
+        CSVExporter.export_to_csv(entries, output_file, format_choice)
         
         print()
         print("=" * 70)
