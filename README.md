@@ -25,8 +25,8 @@ Samsung Pass uses a proprietary encrypted format (`.spass`) that makes it diffic
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/misterpfister8/spass-to-csv.git
-cd spass-to-csv
+git clone https://github.com/misterpfister8/spasstocsv.git
+cd spasstocsv
 ```
 
 2. Install dependencies:
@@ -60,6 +60,7 @@ You'll be prompted for:
 - Path to your `.spass` file
 - The password you set during export
 - Output filename (optional)
+- Output format choice (optional)
 
 Example:
 ```
@@ -70,6 +71,7 @@ Samsung Pass (.spass) to CSV Converter
 Enter path to .spass file: /path/to/your/export.spass
 Enter password: ********
 Output file (default: export_passwords.csv): 
+Choose output format - (1) Raw CSV (default), (2) Chrome CSV (3) Proton Pass CSV:
 
 Processing...
 ----------------------------------------------------------------------
@@ -108,8 +110,9 @@ The output CSV file can be imported into most password managers:
 3. Choose the CSV file
 
 #### **Proton Pass**
+Be sure to select the Proton Pass CSV format when exporting (3).
 1. Go to Settings → Import
-2. Select "Chrome" as provider
+2. Select "Generic CSV" as provider
 3. Upload the CSV file
 
 ## Security Notes
