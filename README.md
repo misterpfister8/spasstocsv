@@ -25,7 +25,7 @@ Samsung Pass uses a proprietary encrypted format (`.spass`) that makes it diffic
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/spass-to-csv.git
+git clone https://github.com/misterpfister8/spass-to-csv.git
 cd spass-to-csv
 ```
 
