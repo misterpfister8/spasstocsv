@@ -1,0 +1,13 @@
+samsung_pass_export
+version:1
+origin_url;username_value;password_value;credential_memo
+aHR0cHM6Ly9sZWdhY3kuZXhhbXBsZS5jb20;legacy-user;raw-password;c3BlY2lhbCDDpMO2IG5vdGU
+next_table
+reserved_5;name_on_card;card_number;expiration_month;expiration_year;security_code
+TXkgVmlzYQ;Sm9obiBEb2U;4111111111111111;MTI;MjAyNg;MTIz
+next_table
+name;street_address;city;postal_code;country_code
+TGVnYWN5IFVzZXI;MTIzIE1haW4gU3RyZWV0;TmV3IFlvcms;MTAwMDE;VVM
+next_table
+note_title;note_detail
+TGVnYWN5IE5vdGU;VmlzaWJsZSBzYWZlIG1ldGFkYXRhIG9ubHk

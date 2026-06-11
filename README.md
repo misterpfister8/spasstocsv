@@ -1,46 +1,56 @@
 # Samsung Pass to CSV Converter
 
-Decrypt Samsung Pass (`.spass`) exports locally and convert password entries to
-CSV files for migration to other password managers.
+Decrypt Samsung Pass (`.spass`) exports locally and convert them for migration
+to other password managers.
 
 This tool is not affiliated with Samsung. Use it only with your own exports.
 
 ## What It Supports
 
 - Decrypts Samsung Pass `.spass` exports protected with the export password
-- Parses multi-table exports containing passwords, cards, addresses, and notes
-- Exports password entries as:
+- Parses both known Samsung Pass v25-style exports and older generator-style layouts
+- Parses passwords, cards, addresses, and notes
+- Exports:
   - `raw` - decoded Samsung Pass password table fields
   - `chrome` - `name,url,username,password,note`
   - `proton` - `name,url,username,password,note,totp`
+  - `bitwarden-json` - Bitwarden JSON with logins, notes, cards, and identities
 - Runs fully locally; no network calls and no data collection
 - Supports `--password-stdin` for terminals and IDEs where hidden password input fails
+- Supports `--inspect` for safe metadata-only diagnostics
 
-Important limitation for v1: cards, addresses, and notes are parsed and tested,
-but only password entries are exported to CSV.
+Default parsing is intentionally tolerant for real Samsung Pass variants. Use
+`--strict` when you want malformed fields to fail instead of being preserved as
+raw text with warnings.
 
 ## Security Notes
 
-- Real `.spass` exports and generated CSV files contain sensitive data.
-- The output CSV contains plaintext passwords. Delete it after importing.
-- Do not commit real `.spass` or CSV files. `.gitignore` blocks them by default.
+- Real `.spass` exports and generated outputs contain sensitive data.
+- CSV and Bitwarden JSON outputs contain plaintext secrets. Delete them after importing.
+- Do not commit real `.spass`, `.csv`, or generated Bitwarden JSON files.
 - Do not pass the export password as a command-line argument. It can end up in
   shell history or process listings.
-- Use `--password-stdin` only with trusted local input, for example from a
-  password manager CLI or a temporary prompt wrapper.
+- `--inspect` prints only version, table names, headers, row counts, and warnings.
+  It must not print usernames, passwords, TOTP secrets, notes, or card numbers.
 
 ## Installation
 
 Requirements:
 
-- Python 3.7 or newer
+- Python 3.9 or newer
 - `cryptography`
 
-Install:
+Install for development:
 
 ```bash
 git clone https://github.com/misterpfister8/spasstocsv.git
 cd spasstocsv
+python3 -m pip install -e .
+```
+
+Minimal dependency install without package entry point:
+
+```bash
 python3 -m pip install -r requirements.txt
 ```
 
@@ -54,10 +64,16 @@ Export your data from Samsung Pass on your Samsung device:
 4. Set an export password and remember it.
 5. Transfer the `.spass` file to your computer.
 
-Convert interactively:
+Convert with the wrapper script:
 
 ```bash
 python3 spass_to_csv.py -i /path/to/export.spass -o passwords.csv --format chrome
+```
+
+Convert with the installed CLI:
+
+```bash
+spasstocsv -i /path/to/export.spass -o passwords.csv --format chrome
 ```
 
 Convert with stdin password input:
@@ -70,10 +86,19 @@ printf 'your-export-password\n' | python3 spass_to_csv.py \
   --format proton
 ```
 
-If `--output` is omitted, the default is:
+Inspect safely without exporting secrets:
 
-```text
-<input-stem>_passwords.csv
+```bash
+printf 'your-export-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  --inspect \
+  -i /path/to/export.spass
+```
+
+Strict parser mode:
+
+```bash
+python3 spass_to_csv.py -i /path/to/export.spass --format chrome --strict
 ```
 
 Available formats:
@@ -82,6 +107,14 @@ Available formats:
 python3 spass_to_csv.py -i export.spass --format raw
 python3 spass_to_csv.py -i export.spass --format chrome
 python3 spass_to_csv.py -i export.spass --format proton
+python3 spass_to_csv.py -i export.spass --format bitwarden-json
+```
+
+If `--output` is omitted, the default is:
+
+```text
+<input-stem>_passwords.csv
+<input-stem>_bitwarden.json   # for --format bitwarden-json
 ```
 
 ## Demo Data
@@ -91,6 +124,8 @@ The repository includes synthetic test fixtures under `tests/fixtures/`.
 - Demo password: `demo-password`
 - Demo domains use `example.com`
 - Demo credentials use fake values such as `not-a-real-password-1`
+- `demo_full.spass` is encrypted with the same known `.spass` crypto layout
+- `legacy_decrypted.txt` exercises tolerant parsing of older/generator-style data
 
 Hands-on demo:
 
@@ -129,8 +164,8 @@ Chrome and Edge:
 
 Bitwarden:
 
-- Use `--format chrome`
-- Import as Chrome CSV
+- Preferred: `--format bitwarden-json`
+- Fallback: `--format chrome` and import as Chrome CSV
 
 Proton Pass:
 
@@ -159,8 +194,9 @@ Crypto parameters:
 - 16 byte IV
 - PKCS7 padding
 
-The decrypted payload is a semicolon-delimited text format. Tables are separated
-by `next_table`. Field values in data rows are base64-encoded UTF-8 strings.
+The decrypted payload is semicolon-delimited text. Tables are separated by
+`next_table`. Headers are plaintext; data row fields are normally base64-encoded
+UTF-8 strings.
 
 ## Testing
 
@@ -176,8 +212,19 @@ Run a syntax check:
 python3 -m py_compile spass_to_csv.py
 ```
 
+Run the CLI smoke test:
+
+```bash
+printf 'demo-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  -i tests/fixtures/demo_full.spass \
+  -o /tmp/spasstocsv-demo.csv \
+  --format chrome
+```
+
 The tests decrypt the synthetic `.spass` fixture, verify wrong-password failure,
-parse all tables, compare CSV snapshots, and run the CLI with `--password-stdin`.
+parse v25 and legacy layouts, compare CSV snapshots, validate Bitwarden JSON,
+verify `--inspect`, and run CLI exports for every format.
 
 ## Troubleshooting
 
@@ -190,10 +237,10 @@ parse all tables, compare CSV snapshots, and run the CLI with `--password-stdin`
 
 - Use the original Samsung Pass export file.
 
-`Error: Invalid base64 in table ...`
+`Warnings: Field was not valid base64/UTF-8 and was kept as raw text`
 
-- The file decrypted, but the internal table data is not in the expected Samsung
-  Pass format.
+- Default mode preserved a field for compatibility with real-world variants.
+- Re-run with `--strict` if you want this to fail hard.
 
 `Error: Required library 'cryptography' not found`
 

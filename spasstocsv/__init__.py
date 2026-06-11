@@ -1,11 +1,7 @@
-#!/usr/bin/env python3
-"""Backward-compatible wrapper for the spasstocsv command."""
+"""Samsung Pass export conversion helpers."""
 
 from __future__ import annotations
 
-import sys
-
-from spasstocsv.cli import main
 from spasstocsv.crypto import SPassDecryptor
 from spasstocsv.errors import DecryptionError, SPassError, SPassFormatError
 from spasstocsv.exporters import CSVExporter
@@ -18,9 +14,4 @@ __all__ = [
     "SPassError",
     "SPassFormatError",
     "SPassParser",
-    "main",
 ]
-
-
-if __name__ == "__main__":
-    sys.exit(main())
