@@ -1,390 +1,442 @@
 #!/usr/bin/env python3
 """
-Samsung Pass to CSV Converter
+Samsung Pass to CSV Converter.
 
-Decrypts Samsung Pass (.spass) export files and converts them to CSV format.
-Compatible with most password managers including Bitwarden, 1Password, and Chrome.
-
-Author: https://github.com/misterpfister8/spass-to-csv
-License: MIT
+Decrypts Samsung Pass (.spass) export files and converts password entries to
+Raw, Chrome, or Proton Pass compatible CSV files.
 """
 
-import sys
+from __future__ import annotations
+
+import argparse
 import base64
+import binascii
 import csv
+import os
+import sys
+from dataclasses import dataclass
 from getpass import getpass
 from pathlib import Path
-from typing import List, Dict
+from typing import Iterable
 
 try:
-    from cryptography.hazmat.primitives import hashes, padding
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes, padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 except ImportError:
-    print("Error: Required library 'cryptography' not found.")
-    print("Please install it using: pip install cryptography")
+    print("Error: Required library 'cryptography' not found.", file=sys.stderr)
+    print("Install it using: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
 
 
+class SPassError(Exception):
+    """Base error for user-facing converter failures."""
+
+
+class DecryptionError(SPassError):
+    """Raised when a .spass file cannot be decrypted."""
+
+
+class SPassFormatError(SPassError):
+    """Raised when decrypted Samsung Pass data is malformed."""
+
+
+@dataclass(frozen=True)
+class SPassTable:
+    """One decoded Samsung Pass table."""
+
+    type: str
+    headers: list[str]
+    rows: list[dict[str, str]]
+
+
+@dataclass(frozen=True)
+class ParsedSPass:
+    """Parsed Samsung Pass export data."""
+
+    version: str
+    data_types: list[str]
+    tables: list[SPassTable]
+
+    @property
+    def password_table(self) -> SPassTable | None:
+        for table in self.tables:
+            if table.type == "passwords":
+                return table
+        return None
+
+    @property
+    def passwords(self) -> list[dict[str, str]]:
+        table = self.password_table
+        return table.rows if table is not None else []
+
+
 class SPassDecryptor:
-    """Decrypt Samsung Pass .spass files using correct encryption parameters"""
-    
-    # Samsung Pass encryption parameters (discovered through reverse engineering)
-    SALT_BYTES = 20          # Salt size in bytes
-    ITERATION_COUNT = 70000  # PBKDF2 iterations
-    KEY_LENGTH = 32          # AES-256 key length
-    BLOCK_SIZE = 128         # AES block size
-    
+    """Decrypt Samsung Pass .spass files."""
+
+    SALT_BYTES = 20
+    IV_BYTES = 16
+    ITERATION_COUNT = 70000
+    KEY_LENGTH = 32
+    BLOCK_SIZE = 128
+    AES_BLOCK_BYTES = 16
+
     def __init__(self, password: str):
-        """Initialize decryptor with password"""
         self.password = password
-    
-    def decrypt_file(self, file_path: str) -> str:
-        """
-        Decrypt a .spass file.
-        
-        File format: Base64(salt(20) + IV(16) + AES-encrypted-data)
-        
-        Args:
-            file_path: Path to the .spass file
-            
-        Returns:
-            Decrypted content as string
-            
-        Raises:
-            FileNotFoundError: If file doesn't exist
-            ValueError: If decryption fails
-        """
-        # Read and decode base64
+
+    def decrypt_file(self, file_path: str | Path) -> str:
+        path = Path(file_path)
+        encrypted_data = self._read_base64_file(path)
+        encrypted_bytes = self._decode_file_base64(encrypted_data)
+
+        minimum_size = self.SALT_BYTES + self.IV_BYTES + self.AES_BLOCK_BYTES
+        if len(encrypted_bytes) < minimum_size:
+            raise DecryptionError(
+                ".spass payload is too short to contain salt, IV, and ciphertext"
+            )
+
+        salt = encrypted_bytes[: self.SALT_BYTES]
+        iv = encrypted_bytes[self.SALT_BYTES : self.SALT_BYTES + self.IV_BYTES]
+        ciphertext = encrypted_bytes[self.SALT_BYTES + self.IV_BYTES :]
+
+        if len(ciphertext) % self.AES_BLOCK_BYTES != 0:
+            raise DecryptionError(".spass ciphertext length is not a valid AES block size")
+
+        key = self._derive_key(salt)
+        return self._decrypt_ciphertext(key, iv, ciphertext)
+
+    @staticmethod
+    def _read_base64_file(path: Path) -> str:
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        if path.is_dir():
+            raise SPassFormatError(f"Input path is a directory, not a .spass file: {path}")
+        if path.suffix.lower() != ".spass":
+            raise SPassFormatError(f"Input file must have a .spass extension: {path}")
+
+        raw_text = path.read_text(encoding="utf-8")
+        return "".join(raw_text.split())
+
+    @staticmethod
+    def _decode_file_base64(base64_data: str) -> bytes:
+        if not base64_data:
+            raise DecryptionError(".spass file is empty")
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                base64_data = f.read().strip()
-        except FileNotFoundError:
-            raise FileNotFoundError(f"File not found: {file_path}")
-        
-        print(f"  File size: {len(base64_data)} characters (base64)")
-        
-        try:
-            encrypted_bytes = base64.b64decode(base64_data)
-            print(f"  Decoded size: {len(encrypted_bytes)} bytes")
-        except Exception as e:
-            raise ValueError(f"Failed to decode base64: {e}")
-        
-        # Extract salt, IV, and ciphertext
-        salt = encrypted_bytes[:self.SALT_BYTES]
-        iv = encrypted_bytes[self.SALT_BYTES:self.SALT_BYTES + 16]
-        ciphertext = encrypted_bytes[self.SALT_BYTES + 16:]
-        
-        print(f"  Salt: {len(salt)} bytes")
-        print(f"  IV: {len(iv)} bytes")
-        print(f"  Ciphertext: {len(ciphertext)} bytes")
-        
-        # Derive key using PBKDF2-HMAC-SHA256
-        print(f"  Deriving key (SHA256, {self.ITERATION_COUNT} iterations)...")
-        
+            return base64.b64decode(base64_data, validate=True)
+        except binascii.Error as exc:
+            raise DecryptionError(f".spass file is not valid base64: {exc}") from exc
+
+    def _derive_key(self, salt: bytes) -> bytes:
         try:
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
                 length=self.KEY_LENGTH,
                 salt=salt,
                 iterations=self.ITERATION_COUNT,
-                backend=default_backend()
+                backend=default_backend(),
             )
-            key = kdf.derive(self.password.encode('utf-8'))
-        except Exception as e:
-            raise ValueError(f"Key derivation failed: {e}")
-        
-        # Decrypt with AES-256-CBC
-        print(f"  Decrypting...")
-        
+            return kdf.derive(self.password.encode("utf-8"))
+        except Exception as exc:
+            raise DecryptionError(f"Key derivation failed: {exc}") from exc
+
+    def _decrypt_ciphertext(self, key: bytes, iv: bytes, ciphertext: bytes) -> str:
         try:
-            cipher = Cipher(
-                algorithms.AES(key),
-                modes.CBC(iv),
-                backend=default_backend()
-            )
+            cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
             decryptor = cipher.decryptor()
-            decrypted_padded = decryptor.update(ciphertext) + decryptor.finalize()
-            
-            # Remove PKCS7 padding
+            padded = decryptor.update(ciphertext) + decryptor.finalize()
+
             unpadder = padding.PKCS7(self.BLOCK_SIZE).unpadder()
-            decrypted = unpadder.update(decrypted_padded) + unpadder.finalize()
-            
-            # Decode as UTF-8
-            decrypted_text = decrypted.decode('utf-8', errors='ignore')
-            
-            if not (';' in decrypted_text and '\n' in decrypted_text):
-                raise ValueError("Decrypted data doesn't look like valid .spass format")
-            
-            return decrypted_text
-            
-        except Exception as e:
-            if "padding" in str(e).lower():
-                raise ValueError("Decryption failed - password is likely incorrect")
-            else:
-                raise ValueError(f"Decryption failed: {e}")
+            decrypted = unpadder.update(padded) + unpadder.finalize()
+            text = decrypted.decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise DecryptionError(
+                "Decryption failed - password is likely incorrect or file is corrupted"
+            ) from exc
+
+        if "next_table" not in text or ";" not in text:
+            raise SPassFormatError("Decrypted data does not look like Samsung Pass export data")
+
+        return text
 
 
 class SPassParser:
-    """Parse decrypted Samsung Pass data"""
-    
-    @staticmethod
-    def parse_decrypted_data(decrypted_data: str) -> List[Dict[str, str]]:
-        """
-        Parse the decrypted .spass data into structured format.
-        
-        Args:
-            decrypted_data: Decrypted content from .spass file
-            
-        Returns:
-            List of password entry dictionaries
-            
-        Raises:
-            ValueError: If data format is invalid
-        """
-        lines = decrypted_data.strip().split('\n')
-        
-        if len(lines) < 3:
-            raise ValueError("Invalid .spass file format")
-        
+    """Parse decrypted Samsung Pass data into typed tables."""
+
+    DEFAULT_TABLE_TYPES = ["passwords", "cards", "addresses", "notes"]
+    TYPE_ALIASES = {
+        "password": "passwords",
+        "passwords": "passwords",
+        "credential": "passwords",
+        "credentials": "passwords",
+        "card": "cards",
+        "cards": "cards",
+        "address": "addresses",
+        "addresses": "addresses",
+        "identity": "addresses",
+        "identities": "addresses",
+        "note": "notes",
+        "notes": "notes",
+        "secure_note": "notes",
+        "secure_notes": "notes",
+    }
+
+    @classmethod
+    def parse_decrypted_data(cls, decrypted_data: str) -> ParsedSPass:
+        lines = [line.strip("\r") for line in decrypted_data.splitlines()]
+        if len(lines) < 4:
+            raise SPassFormatError("Invalid .spass data: expected header and at least one table")
+
         version = lines[0].strip()
-        data_types = lines[1].strip()
-        
-        print(f"  Version: {version}")
-        print(f"  Data types: {data_types}")
-        
-        # Parse tables
+        data_types = cls._parse_data_types(lines[1].strip())
+        table_chunks = cls._split_table_chunks(lines[2:])
+        if not table_chunks:
+            raise SPassFormatError("Invalid .spass data: no data tables found")
+
         tables = []
-        current_table = None
-        headers = None
-        
-        for line in lines[2:]:
-            line = line.strip()
-            
+        for index, chunk in enumerate(table_chunks):
+            table_type = cls._table_type_for_index(index, data_types)
+            tables.append(cls._parse_table(table_type, chunk, index + 1))
+
+        return ParsedSPass(version=version, data_types=data_types, tables=tables)
+
+    @classmethod
+    def _parse_data_types(cls, line: str) -> list[str]:
+        tokens = [token.strip().lower() for token in line.replace(",", ";").split(";")]
+        tokens = [token for token in tokens if token]
+
+        if tokens and all(token in {"true", "false"} for token in tokens):
+            enabled = []
+            for index, token in enumerate(tokens[: len(cls.DEFAULT_TABLE_TYPES)]):
+                if token == "true":
+                    enabled.append(cls.DEFAULT_TABLE_TYPES[index])
+            return enabled
+
+        parsed = []
+        for token in tokens:
+            alias = cls.TYPE_ALIASES.get(token)
+            if alias is not None:
+                parsed.append(alias)
+        return parsed
+
+    @staticmethod
+    def _split_table_chunks(lines: Iterable[str]) -> list[list[str]]:
+        tables: list[list[str]] = []
+        current_table: list[str] | None = None
+
+        for raw_line in lines:
+            line = raw_line.strip()
             if not line:
                 continue
-            
+
             if line == "next_table":
-                if current_table is not None and headers is not None:
-                    tables.append({'headers': headers, 'rows': current_table})
+                if current_table is not None:
+                    if not current_table:
+                        raise SPassFormatError("Invalid .spass data: empty table section")
+                    tables.append(current_table)
                 current_table = []
-                headers = None
                 continue
-            
-            if current_table is not None:
-                if headers is None:
-                    headers = [h.strip() for h in line.split(';')]
-                else:
-                    current_table.append(line)
-        
-        # Add last table
-        if current_table is not None and headers is not None:
-            tables.append({'headers': headers, 'rows': current_table})
-        
-        print(f"  Found {len(tables)} table(s)")
-        
-        if not tables:
-            raise ValueError("No data tables found")
-        
-        return SPassParser._parse_password_table(tables[0])
-    
+
+            if current_table is None:
+                continue
+
+            current_table.append(line)
+
+        if current_table is not None:
+            if not current_table:
+                raise SPassFormatError("Invalid .spass data: trailing empty table section")
+            tables.append(current_table)
+
+        return tables
+
+    @classmethod
+    def _table_type_for_index(cls, index: int, data_types: list[str]) -> str:
+        if index < len(data_types):
+            return data_types[index]
+        if not data_types and index < len(cls.DEFAULT_TABLE_TYPES):
+            return cls.DEFAULT_TABLE_TYPES[index]
+        return f"table_{index + 1}"
+
+    @classmethod
+    def _parse_table(cls, table_type: str, lines: list[str], table_number: int) -> SPassTable:
+        headers = [header.strip() for header in lines[0].split(";")]
+        if not headers or any(not header for header in headers):
+            raise SPassFormatError(f"Table {table_number} has invalid headers")
+
+        rows = []
+        for row_number, line in enumerate(lines[1:], start=1):
+            fields = line.split(";")
+            if len(fields) > len(headers):
+                raise SPassFormatError(
+                    f"Table {table_number} row {row_number} has more fields than headers"
+                )
+            fields.extend([""] * (len(headers) - len(fields)))
+
+            row = {}
+            for header, field in zip(headers, fields):
+                row[header] = cls._decode_field(field, table_number, row_number, header)
+            rows.append(row)
+
+        return SPassTable(type=table_type, headers=headers, rows=rows)
+
     @staticmethod
-    def _decode_field(field: str) -> str:
-        """Decode base64-encoded field if needed"""
-        if not field:
+    def _decode_field(field: str, table_number: int, row_number: int, header: str) -> str:
+        if field == "":
             return ""
-        
+
+        padded = field + "=" * (-len(field) % 4)
         try:
-            # Add padding if needed
-            padded = field + '=' * (-len(field) % 4)
-            decoded = base64.b64decode(padded).decode('utf-8', errors='ignore')
-            # Only use decoded if it looks valid
-            if decoded and all(c.isprintable() or c.isspace() for c in decoded):
-                return decoded
-        except:
-            pass
-        
-        return field
-    
-    @staticmethod
-    def _parse_password_table(table: Dict) -> List[Dict[str, str]]:
-        """Parse the password table into list of entries"""
-        headers = table['headers']
-        entries = []
-        
-        print(f"  Columns: {', '.join(headers)}")
-        
-        for row in table['rows']:
-            fields = row.split(';')
-            
-            entry = {}
-            for i, header in enumerate(headers):
-                if i < len(fields):
-                    entry[header] = SPassParser._decode_field(fields[i])
-                else:
-                    entry[header] = ''
-            
-            entries.append(entry)
-        
-        return entries
+            decoded = base64.b64decode(padded, validate=True)
+        except binascii.Error as exc:
+            raise SPassFormatError(
+                f"Invalid base64 in table {table_number}, row {row_number}, field '{header}'"
+            ) from exc
+
+        try:
+            return decoded.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise SPassFormatError(
+                f"Invalid UTF-8 in table {table_number}, row {row_number}, field '{header}'"
+            ) from exc
 
 
 class CSVExporter:
-    """Export parsed data to CSV format"""
-    
+    """Export parsed password entries to supported CSV formats."""
+
+    FORMATS = {"raw", "chrome", "proton"}
+
+    @classmethod
+    def export_passwords(cls, parsed: ParsedSPass, output_path: str | Path, format_name: str) -> int:
+        if format_name not in cls.FORMATS:
+            raise ValueError(f"Unsupported output format: {format_name}")
+
+        password_table = parsed.password_table
+        if password_table is None:
+            raise SPassFormatError("No password table found in the Samsung Pass export")
+
+        if format_name == "raw":
+            headers = password_table.headers
+            rows = password_table.rows
+        elif format_name == "chrome":
+            headers = ["name", "url", "username", "password", "note"]
+            rows = [cls._mapped_password_row(entry, include_totp=False) for entry in password_table.rows]
+        else:
+            headers = ["name", "url", "username", "password", "note", "totp"]
+            rows = [cls._mapped_password_row(entry, include_totp=True) for entry in password_table.rows]
+
+        cls._write_csv(Path(output_path), headers, rows)
+        return len(rows)
+
+    @classmethod
+    def _mapped_password_row(cls, entry: dict[str, str], include_totp: bool) -> dict[str, str]:
+        row = {
+            "name": cls._first_value(entry, "title", "name", "host_url", "origin_url", "url"),
+            "url": cls._first_value(entry, "host_url", "origin_url", "url"),
+            "username": cls._first_value(entry, "username_value", "username", "email"),
+            "password": cls._first_value(entry, "password_value", "password"),
+            "note": cls._first_value(entry, "credential_memo", "note", "notes"),
+        }
+        if include_totp:
+            row["totp"] = cls._first_value(entry, "otp", "totp")
+        return row
+
     @staticmethod
-    def export_to_csv(entries: List[Dict[str, str]], output_path: str, format_choice: str):
-        """
-        Export password entries to CSV file.
-        
-        Args:
-            entries: List of password entry dictionaries
-            output_path: Path for output CSV file
-            format_choice: Output format choice
-                           '1' - Raw CSV
-                           '2' - Chrome CSV
-                           '3' - Proton Pass CSV
-        """
-        if not entries:
-            print("Warning: No entries to export")
-            return
-        
-        # Get all headers
-        all_headers = set()
-        for entry in entries:
-            all_headers.update(entry.keys())
+    def _first_value(entry: dict[str, str], *keys: str) -> str:
+        for key in keys:
+            value = entry.get(key, "")
+            if value:
+                return value
+        return ""
 
-        # If Chrome format selected
-        if format_choice == '2':
-            # Chrome CSV format
-            header_mapping = {
-                'host_url': 'url',
-                'username_value': 'username',
-                'password_value': 'password',
-                'origin_url': 'formActionOrigin',
-                'created_time': 'timeCreated',
-                'modified_time': 'timePasswordChanged'
-            }
+    @staticmethod
+    def _write_csv(output_path: Path, headers: list[str], rows: list[dict[str, str]]) -> None:
+        if output_path.parent and not output_path.parent.exists():
+            raise FileNotFoundError(f"Output directory does not exist: {output_path.parent}")
 
-            # Remap headers
-            for entry in entries:
-                for old_key, new_key in header_mapping.items():
-                    if old_key in entry:
-                        entry[new_key] = entry.pop(old_key)
+        fd = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            try:
+                if hasattr(os, "fchmod"):
+                    os.fchmod(fd, 0o600)
+            except OSError:
+                pass
 
-            all_headers.clear()
-            all_headers.update(header_mapping.values())
-        
-        # If Proton Pass format selected
-        elif format_choice == '3':
-            # Map Samsung Pass headers to Chrome compatible headers
-            header_mapping = {
-                'title': 'name',
-                'host_url': 'url',
-                'username_value': 'username',
-                'password_value': 'password',
-                'otp': 'totp',
-                'credential_memo': 'note'
-            }
-
-            # Remap headers
-            for entry in entries:
-                for old_key, new_key in header_mapping.items():
-                    if old_key in entry:
-                        entry[new_key] = entry.pop(old_key)
-
-            all_headers.clear()
-            all_headers.update(header_mapping.values())
-        
-        # Prioritize common headers
-        priority = ['name', 'url', 'username', 'password', 'email', 'notes', 'otp']
-        ordered_headers = [h for h in priority if h in all_headers]
-        ordered_headers.extend(sorted(all_headers - set(ordered_headers)))
-        
-        # Write CSV
-        with open(output_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=ordered_headers, extrasaction='ignore')
-            writer.writeheader()
-            writer.writerows(entries)
-        
-        print(f"  ✓ Exported {len(entries)} entries")
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                fd = -1
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=headers,
+                    extrasaction="ignore",
+                    lineterminator="\n",
+                )
+                writer.writeheader()
+                writer.writerows(rows)
+        finally:
+            if fd != -1:
+                os.close(fd)
 
 
-def main():
-    """Main entry point"""
-    print("=" * 70)
-    print("Samsung Pass (.spass) to CSV Converter")
-    print("=" * 70)
-    print()
-    
-    # Get file path
-    while True:
-        file_path = input("Enter path to .spass file: ").strip().strip('"').strip("'")
-        if file_path and Path(file_path).exists():
-            break
-        print(f"Error: File not found: {file_path}")
-    
-    # Get password
-    password = getpass("Enter password: ")
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Decrypt a Samsung Pass .spass export and write password entries as CSV."
+    )
+    parser.add_argument("-i", "--input", required=True, help="Path to the Samsung Pass .spass file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Output CSV path. Defaults to '<input-stem>_passwords.csv'.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=sorted(CSVExporter.FORMATS),
+        default="raw",
+        help="CSV output format. Default: raw.",
+    )
+    parser.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="Read the export password from stdin instead of an interactive prompt.",
+    )
+    return parser
+
+
+def read_password(password_stdin: bool) -> str:
+    if password_stdin:
+        password = sys.stdin.readline().rstrip("\r\n")
+    else:
+        password = getpass("Export password: ")
+
     if not password:
-        print("Error: Password required")
-        sys.exit(1)
-    
-    # Output file
-    output_file = Path(file_path).stem + "_passwords.csv"
-    custom_output = input(f"Output file (default: {output_file}): ").strip()
-    if custom_output:
-        output_file = custom_output
+        raise SPassFormatError("Password required")
+    return password
 
-    # Choose output file format
-    format_choice = input("Choose output format - (1) Raw CSV (default), (2) Chrome CSV (3) Proton Pass CSV: ").strip()
-    if format_choice not in ['1', '2', '3', '']:
-        print("Error: Invalid choice")
-        sys.exit(1)
 
-    # Default to Raw CSV if no choice made
-    if not format_choice:
-        format_choice = '1'   
+def default_output_path(input_path: Path) -> Path:
+    return input_path.with_name(f"{input_path.stem}_passwords.csv")
 
-    print()
-    print("Processing...")
-    print("-" * 70)
-    
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    input_path = Path(args.input).expanduser()
+    output_path = Path(args.output).expanduser() if args.output else default_output_path(input_path)
+
     try:
-        # Decrypt
-        print("Step 1/3: Decrypting...")
-        decryptor = SPassDecryptor(password)
-        decrypted = decryptor.decrypt_file(file_path)
-        print("  ✓ Decryption successful")
-        
-        # Parse
-        print("\nStep 2/3: Parsing...")
-        entries = SPassParser.parse_decrypted_data(decrypted)
-        print(f"  ✓ Parsed {len(entries)} entries")
-        
-        # Export
-        print("\nStep 3/3: Exporting...")
-        CSVExporter.export_to_csv(entries, output_file, format_choice)
-        
-        print()
-        print("=" * 70)
-        print(f"✓ SUCCESS! Converted {len(entries)} passwords")
-        print(f"Output: {output_file}")
-        print("=" * 70)
-        print()
-        print("⚠️  Security reminder: Delete the CSV file after importing to your")
-        print("   password manager, as it contains unencrypted passwords!")
-        
-    except (ValueError, FileNotFoundError) as e:
-        print(f"\n❌ Error: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        password = read_password(args.password_stdin)
+        decrypted = SPassDecryptor(password).decrypt_file(input_path)
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+        count = CSVExporter.export_passwords(parsed, output_path, args.format)
+    except (SPassError, OSError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    table_summary = ", ".join(f"{table.type}={len(table.rows)}" for table in parsed.tables)
+    print(f"Parsed Samsung Pass export version {parsed.version}: {table_summary}")
+    print(f"Exported {count} password entries to {output_path}")
+    print("Security: the CSV contains plaintext passwords. Delete it after import.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,16 @@
+25
+true;true;true;true
+false
+next_table
+title;host_url;origin_url;username_value;password_value;credential_memo;otp
+RXhhbXBsZSBMb2dpbg==;aHR0cHM6Ly9sb2dpbi5leGFtcGxlLmNvbQ==;aHR0cHM6Ly9sb2dpbi5leGFtcGxlLmNvbS9zaWduLWlu;YWxpY2VAZXhhbXBsZS5jb20=;bm90LWEtcmVhbC1wYXNzd29yZC0x;UGVyc29uYWwgZGVtbyBlbnRyeQ==;b3RwYXV0aDovL3RvdHAvRXhhbXBsZTphbGljZUBleGFtcGxlLmNvbT9zZWNyZXQ9RVhBTVBMRVNFQ1JFVCZpc3N1ZXI9RXhhbXBsZQ==
+RXhhbXBsZSBBZG1pbg==;aHR0cHM6Ly9hZG1pbi5leGFtcGxlLmNvbQ==;aHR0cHM6Ly9hZG1pbi5leGFtcGxlLmNvbS9sb2dpbg==;YWRtaW5AZXhhbXBsZS5jb20=;bm90LWEtcmVhbC1wYXNzd29yZC0y;;
+next_table
+name_on_card;card_number;expiration_month;expiration_year;security_code
+RGVtbyBVc2Vy;NDExMTExMTExMTExMTExMQ==;MTI=;MjAzMA==;MTIz
+next_table
+name;street_address;city;postal_code;country_code
+QWxpY2UgRXhhbXBsZQ==;RXhhbXBsZSBTdHJlZXQgMQ==;WnVyaWNo;ODAwMA==;Q0g=
+next_table
+note_title;note_detail
+RGVtbyBOb3Rl;VGhpcyBpcyBzeW50aGV0aWMgZml4dHVyZSBkYXRhIG9ubHku

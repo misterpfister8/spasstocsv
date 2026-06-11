@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+env/
+
+# Real Samsung Pass exports and generated CSVs contain secrets.
+*.spass
+*.csv
+*_passwords.csv
+
+# Synthetic test fixtures are intentionally safe to commit.
+!tests/fixtures/demo_*.spass
+!tests/fixtures/expected_*.csv

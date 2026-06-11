@@ -1,199 +1,213 @@
 # Samsung Pass to CSV Converter
 
-A Python utility to decrypt and convert Samsung Pass (`.spass`) export files to CSV format, making it easy to migrate your passwords to other password managers.
+Decrypt Samsung Pass (`.spass`) exports locally and convert password entries to
+CSV files for migration to other password managers.
 
-## Features
+This tool is not affiliated with Samsung. Use it only with your own exports.
 
-✅ **Decrypts Samsung Pass exports** - Full support for `.spass` file format  
-✅ **CSV output** - Compatible with Bitwarden, 1Password, Chrome, Edge, and more  
-✅ **Secure** - Uses proper AES-256-CBC decryption with PBKDF2-HMAC-SHA256  
-✅ **Easy to use** - Simple command-line interface  
-✅ **No data collection** - Everything runs locally on your machine  
+## What It Supports
 
-## Why This Tool?
+- Decrypts Samsung Pass `.spass` exports protected with the export password
+- Parses multi-table exports containing passwords, cards, addresses, and notes
+- Exports password entries as:
+  - `raw` - decoded Samsung Pass password table fields
+  - `chrome` - `name,url,username,password,note`
+  - `proton` - `name,url,username,password,note,totp`
+- Runs fully locally; no network calls and no data collection
+- Supports `--password-stdin` for terminals and IDEs where hidden password input fails
 
-Samsung Pass uses a proprietary encrypted format (`.spass`) that makes it difficult to migrate your passwords to other password managers. This tool decrypts and converts your Samsung Pass data to a standard CSV format that can be imported into virtually any password manager.
+Important limitation for v1: cards, addresses, and notes are parsed and tested,
+but only password entries are exported to CSV.
+
+## Security Notes
+
+- Real `.spass` exports and generated CSV files contain sensitive data.
+- The output CSV contains plaintext passwords. Delete it after importing.
+- Do not commit real `.spass` or CSV files. `.gitignore` blocks them by default.
+- Do not pass the export password as a command-line argument. It can end up in
+  shell history or process listings.
+- Use `--password-stdin` only with trusted local input, for example from a
+  password manager CLI or a temporary prompt wrapper.
 
 ## Installation
 
-### Requirements
+Requirements:
 
-- Python 3.7 or higher
-- `cryptography` library
+- Python 3.7 or newer
+- `cryptography`
 
-### Setup
+Install:
 
-1. Clone this repository:
 ```bash
 git clone https://github.com/misterpfister8/spasstocsv.git
 cd spasstocsv
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-Or install the cryptography library directly:
-```bash
-pip install cryptography
+python3 -m pip install -r requirements.txt
 ```
 
 ## Usage
 
-### Step 1: Export from Samsung Pass
+Export your data from Samsung Pass on your Samsung device:
 
-1. Open **Samsung Pass** on your Samsung device
-2. Go to **Settings** → **Export data**
-3. Choose the data you want to export (passwords, cards, addresses, notes)
-4. **Set a password** for the export (remember this!)
-5. Save the `.spass` file and transfer it to your computer
+1. Open Samsung Pass.
+2. Go to Settings -> Export data.
+3. Select the data to export.
+4. Set an export password and remember it.
+5. Transfer the `.spass` file to your computer.
 
-### Step 2: Convert to CSV
+Convert interactively:
 
-Run the script:
 ```bash
-python spass_to_csv.py
+python3 spass_to_csv.py -i /path/to/export.spass -o passwords.csv --format chrome
 ```
 
-You'll be prompted for:
-- Path to your `.spass` file
-- The password you set during export
-- Output filename (optional)
-- Output format choice (optional)
+Convert with stdin password input:
 
-Example:
-```
-======================================================================
-Samsung Pass (.spass) to CSV Converter
-======================================================================
-
-Enter path to .spass file: /path/to/your/export.spass
-Enter password: ********
-Output file (default: export_passwords.csv): 
-Choose output format - (1) Raw CSV (default), (2) Chrome CSV (3) Proton Pass CSV:
-
-Processing...
-----------------------------------------------------------------------
-Step 1/3: Decrypting...
-  ✓ Decryption successful
-
-Step 2/3: Parsing...
-  ✓ Parsed 99 entries
-
-Step 3/3: Exporting...
-  ✓ Exported 99 entries
-
-======================================================================
-✓ SUCCESS! Converted 99 passwords
-Output: export_passwords.csv
-======================================================================
+```bash
+printf 'your-export-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  -i /path/to/export.spass \
+  -o passwords.csv \
+  --format proton
 ```
 
-### Step 3: Import to Your Password Manager
+If `--output` is omitted, the default is:
 
-The output CSV file can be imported into most password managers:
+```text
+<input-stem>_passwords.csv
+```
 
-#### **Chrome / Edge**
-1. Go to `chrome://settings/passwords` or `edge://settings/passwords`
-2. Click ⋮ → Import passwords
-3. Select the CSV file
+Available formats:
 
-#### **Bitwarden**
-1. Go to Tools → Import Data
-2. Select "Chrome (csv)" as format
-3. Choose the CSV file
+```bash
+python3 spass_to_csv.py -i export.spass --format raw
+python3 spass_to_csv.py -i export.spass --format chrome
+python3 spass_to_csv.py -i export.spass --format proton
+```
 
-#### **1Password**
-1. Go to File → Import
-2. Select "Chrome" as source
-3. Choose the CSV file
+## Demo Data
 
-#### **Proton Pass**
-Be sure to select the Proton Pass CSV format when exporting (3).
-1. Go to Settings → Import
-2. Select "Generic CSV" as provider
-3. Upload the CSV file
+The repository includes synthetic test fixtures under `tests/fixtures/`.
 
-## Security Notes
+- Demo password: `demo-password`
+- Demo domains use `example.com`
+- Demo credentials use fake values such as `not-a-real-password-1`
 
-⚠️ **Important Security Considerations:**
+Hands-on demo:
 
-1. **Delete the CSV file** after importing - it contains unencrypted passwords
-2. **Keep your `.spass` file secure** - it's encrypted but still sensitive
-3. **Use a strong export password** when creating the `.spass` file
-4. **Don't commit sensitive files** to version control
+```bash
+printf 'demo-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  -i tests/fixtures/demo_full.spass \
+  -o /tmp/spasstocsv-demo.csv \
+  --format chrome
+```
+
+Inspect the generated demo CSV:
+
+```bash
+cat /tmp/spasstocsv-demo.csv
+```
+
+Preview the demo output path before deleting it:
+
+```bash
+ls -l /tmp/spasstocsv-demo.csv
+```
+
+Delete the demo output when done:
+
+```bash
+rm /tmp/spasstocsv-demo.csv
+```
+
+## Import Notes
+
+Chrome and Edge:
+
+- Use `--format chrome`
+- Import via the browser password manager import flow
+
+Bitwarden:
+
+- Use `--format chrome`
+- Import as Chrome CSV
+
+Proton Pass:
+
+- Use `--format proton`
+- Import as Generic CSV
+
+1Password:
+
+- Use `--format chrome`
+- Import as Chrome CSV
 
 ## Technical Details
 
-### Encryption Specifications
+Observed Samsung Pass export structure:
 
-Samsung Pass uses the following encryption:
-
-- **Outer layer**: Base64 encoding
-- **Inner layer**: AES-256-CBC encryption
-- **Key derivation**: PBKDF2-HMAC-SHA256 with 70,000 iterations
-- **Salt size**: 20 bytes
-- **IV size**: 16 bytes
-
-File structure:
-```
-Base64(salt[20 bytes] + IV[16 bytes] + AES-encrypted-data)
+```text
+Base64(salt[20 bytes] + IV[16 bytes] + AES-256-CBC(ciphertext))
 ```
 
-### CSV Output Format
+Crypto parameters:
 
-The script outputs a CSV with prioritized columns:
+- AES-256-CBC
+- PBKDF2-HMAC-SHA256
+- 70,000 PBKDF2 iterations
+- 20 byte salt
+- 16 byte IV
+- PKCS7 padding
 
-- `name` - Website/app name
-- `url` - Website URL or app package
-- `username` - Username or email
-- `password` - Password
-- `email` - Email address (if separate)
-- `notes` - Additional notes
-- `otp` - Two-factor authentication codes
+The decrypted payload is a semicolon-delimited text format. Tables are separated
+by `next_table`. Field values in data rows are base64-encoded UTF-8 strings.
+
+## Testing
+
+Run the full test suite:
+
+```bash
+python3 -m unittest
+```
+
+Run a syntax check:
+
+```bash
+python3 -m py_compile spass_to_csv.py
+```
+
+The tests decrypt the synthetic `.spass` fixture, verify wrong-password failure,
+parse all tables, compare CSV snapshots, and run the CLI with `--password-stdin`.
 
 ## Troubleshooting
 
-### "Decryption failed - password is likely incorrect"
+`Error: Decryption failed - password is likely incorrect or file is corrupted`
 
-- Double-check the password you entered
-- Make sure you're using the password you set during the Samsung Pass export
+- Check that you entered the Samsung Pass export password.
+- Check that the file was transferred completely.
 
-### "File not found"
+`Error: Input file must have a .spass extension`
 
-- Check the file path is correct
-- Use absolute paths or ensure the file is in the current directory
+- Use the original Samsung Pass export file.
 
-### "Required library 'cryptography' not found"
+`Error: Invalid base64 in table ...`
 
-- Install the cryptography library: `pip install cryptography`
-- If using Python 3, try: `pip3 install cryptography`
+- The file decrypted, but the internal table data is not in the expected Samsung
+  Pass format.
 
-## Contributing
+`Error: Required library 'cryptography' not found`
 
-Contributions are welcome! Feel free to:
-
-- Report bugs
-- Suggest new features
-- Submit pull requests
-- Improve documentation
+```bash
+python3 -m pip install -r requirements.txt
+```
 
 ## Credits
 
-This tool was developed through reverse engineering the Samsung Pass `.spass` file format. Special thanks to:
+Format and implementation references:
 
-- [mssa2468/samsung-pass-to-bitwarden-converter](https://github.com/mssa2468/samsung-pass-to-bitwarden-converter) - For encryption parameter discovery
-- [0xdeb7ef/spass-manager](https://github.com/0xdeb7ef/spass-manager) - For Go implementation reference
+- [mssa2468/samsung-pass-to-bitwarden-converter](https://github.com/mssa2468/samsung-pass-to-bitwarden-converter)
+- [0xdeb7ef/spass-manager](https://github.com/0xdeb7ef/spass-manager)
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details
-
-## Disclaimer
-
-This tool is not affiliated with, endorsed by, or supported by Samsung. Use at your own risk and always keep backups of your data.
-
----
-
-If you find this tool helpful, please ⭐ star the repository!
+MIT License - see [LICENSE](LICENSE).
