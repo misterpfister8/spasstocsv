@@ -8,6 +8,9 @@ env/
 build/
 dist/
 
+private-fixtures/*
+!private-fixtures/README.md
+
 # Real Samsung Pass exports and generated CSVs contain secrets.
 *.spass
 *.csv

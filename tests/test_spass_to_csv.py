@@ -8,7 +8,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from spass_to_csv import CSVExporter, DecryptionError, SPassDecryptor, SPassFormatError, SPassParser
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+from spass_to_csv import (
+    CSVExporter,
+    DecryptionError,
+    SPassDecryptor,
+    SPassFormatError,
+    SPassParser,
+    WarningCode,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +27,22 @@ FIXTURES = ROOT / "tests" / "fixtures"
 DEMO_SPASS = FIXTURES / "demo_full.spass"
 DEMO_DECRYPTED = FIXTURES / "demo_decrypted.txt"
 LEGACY_DECRYPTED = FIXTURES / "legacy_decrypted.txt"
+
+
+def b64(value: str) -> str:
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def encrypt_spass_text(plaintext: str, password: str) -> str:
+    salt = b"spasstocsv-demo-salt"
+    iv = b"demo-iv-12345678"
+    key = SPassDecryptor(password)._derive_key(salt)
+    padder = padding.PKCS7(SPassDecryptor.BLOCK_SIZE).padder()
+    padded = padder.update(plaintext.encode("utf-8")) + padder.finalize()
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    ciphertext = encryptor.update(padded) + encryptor.finalize()
+    return base64.b64encode(salt + iv + ciphertext).decode("ascii")
 
 
 class SPassConverterTests(unittest.TestCase):
@@ -63,6 +90,7 @@ class SPassConverterTests(unittest.TestCase):
         self.assertEqual(parsed.passwords[0]["credential_memo"], "special äö note")
         self.assertGreaterEqual(len(parsed.warnings), 3)
         self.assertTrue(all("raw text" in warning.message for warning in parsed.warnings))
+        self.assertTrue(all(warning.code == WarningCode.RAW_FIELD_FALLBACK for warning in parsed.warnings))
 
     def test_strict_mode_rejects_raw_legacy_fields(self) -> None:
         with self.assertRaises(SPassFormatError):
@@ -70,6 +98,62 @@ class SPassConverterTests(unittest.TestCase):
                 LEGACY_DECRYPTED.read_text(encoding="utf-8"),
                 strict=True,
             )
+
+    def test_parser_handles_quoted_semicolon_fields(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value",
+                f"\"raw;title\";{b64('https://semicolon.example.com')};{b64('semi@example.com')};{b64('not-a-real-password-semi')}",
+            ]
+        )
+
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+
+        self.assertEqual(parsed.passwords[0]["title"], "raw;title")
+        self.assertEqual(parsed.passwords[0]["host_url"], "https://semicolon.example.com")
+        self.assertIn(WarningCode.RAW_FIELD_FALLBACK, [warning.code for warning in parsed.warnings])
+
+    def test_parser_handles_crlf_exports(self) -> None:
+        decrypted = "\r\n".join(
+            [
+                "25",
+                "true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value",
+                f"{b64('CRLF Login')};{b64('https://crlf.example.com')};{b64('crlf@example.com')};{b64('not-a-real-password-crlf')}",
+            ]
+        )
+
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+
+        self.assertEqual(parsed.version, "25")
+        self.assertEqual(parsed.passwords[0]["title"], "CRLF Login")
+
+    def test_unknown_table_and_extra_columns_emit_warning_codes(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "false",
+                "false",
+                "next_table",
+                "mystery_name;mystery_value",
+                f"{b64('alpha')};{b64('beta')};{b64('gamma')}",
+            ]
+        )
+
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+        codes = [warning.code for warning in parsed.warnings]
+
+        self.assertEqual(parsed.tables[0].type, "table_1")
+        self.assertEqual(parsed.tables[0].headers, ["mystery_name", "mystery_value", "extra_3"])
+        self.assertIn(WarningCode.UNKNOWN_TABLE, codes)
+        self.assertIn(WarningCode.EXTRA_COLUMNS, codes)
+        self.assertIn(WarningCode.EMPTY_PASSWORD_TABLE, codes)
 
     def test_export_snapshots(self) -> None:
         parsed = SPassParser.parse_decrypted_data(DEMO_DECRYPTED.read_text(encoding="utf-8"))
@@ -99,6 +183,42 @@ class SPassConverterTests(unittest.TestCase):
         self.assertEqual(payload["items"][2]["secureNote"]["type"], 0)
         self.assertEqual(payload["items"][3]["card"]["number"], "4111111111111111")
         self.assertEqual(payload["items"][4]["identity"]["country"], "CH")
+
+    def test_bitwarden_json_preserves_unknown_password_fields(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value;custom_tag",
+                f"{b64('Custom Login')};{b64('https://custom.example.com')};{b64('custom@example.com')};{b64('not-a-real-password-custom')};{b64('migration-note')}",
+            ]
+        )
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "bitwarden.json"
+            CSVExporter.export(parsed, output, "bitwarden-json")
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            payload["items"][0]["fields"],
+            [{"name": "custom_tag", "value": "migration-note", "type": 0}],
+        )
+
+    def test_cli_list_formats(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "spass_to_csv.py"), "--list-formats"],
+            text=True,
+            capture_output=True,
+            cwd=ROOT,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for format_name in ("raw", "chrome", "proton", "bitwarden-json"):
+            self.assertIn(format_name, result.stdout)
 
     def test_cli_password_stdin_hands_on_for_all_formats(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -151,6 +271,42 @@ class SPassConverterTests(unittest.TestCase):
         self.assertIn("passwords rows=2", result.stdout)
         self.assertNotIn("not-a-real-password", result.stdout)
         self.assertNotIn("alice@example.com", result.stdout)
+
+    def test_cli_inspect_prints_warning_codes_without_values(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value",
+                f"\"raw;title\";{b64('https://warning.example.com')};{b64('warning@example.com')};{b64('not-a-real-password-warning')}",
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            export_path = Path(tmpdir) / "warning.spass"
+            export_path.write_text(encrypt_spass_text(decrypted, "demo-password"), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "spass_to_csv.py"),
+                    "--password-stdin",
+                    "--inspect",
+                    "-i",
+                    str(export_path),
+                ],
+                input="demo-password\n",
+                text=True,
+                capture_output=True,
+                cwd=ROOT,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(WarningCode.RAW_FIELD_FALLBACK, result.stdout)
+        self.assertNotIn("raw;title", result.stdout)
+        self.assertNotIn("not-a-real-password-warning", result.stdout)
 
 
 if __name__ == "__main__":

@@ -4,17 +4,48 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spasstocsv"
-version = "0.2.0"
+version = "0.3.0"
 description = "Decrypt Samsung Pass .spass exports and convert them locally."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
+authors = [
+  { name = "misterpfister8" },
+]
+keywords = [
+  "samsung-pass",
+  "spass",
+  "password-manager",
+  "csv",
+  "bitwarden",
+  "proton-pass",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+  "Topic :: Utilities",
+]
 dependencies = [
   "cryptography>=41.0.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/misterpfister8/spasstocsv"
+Repository = "https://github.com/misterpfister8/spasstocsv"
+Issues = "https://github.com/misterpfister8/spasstocsv/issues"
 
 [project.scripts]
 spasstocsv = "spasstocsv.cli:main"
 
 [tool.setuptools]
 packages = ["spasstocsv"]
+license-files = ["LICENSE"]

@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
+
+
+class WarningCode:
+    """Stable non-secret warning codes for diagnostics and support."""
+
+    RAW_FIELD_FALLBACK = "RAW_FIELD_FALLBACK"
+    EXTRA_COLUMNS = "EXTRA_COLUMNS"
+    UNKNOWN_TABLE = "UNKNOWN_TABLE"
+    EMPTY_PASSWORD_TABLE = "EMPTY_PASSWORD_TABLE"
 
 
 @dataclass(frozen=True)
 class SPassWarning:
     """Non-fatal parser warning without secret field values."""
 
+    code: str
     message: str
-    table_number: int | None = None
-    table_type: str | None = None
-    row_number: int | None = None
-    field: str | None = None
+    table_number: Optional[int] = None
+    table_type: Optional[str] = None
+    row_number: Optional[int] = None
+    field: Optional[str] = None
 
     def describe(self) -> str:
         parts = []
@@ -26,7 +37,7 @@ class SPassWarning:
         if self.field:
             parts.append(f"field={self.field}")
         location = f" ({', '.join(parts)})" if parts else ""
-        return f"{self.message}{location}"
+        return f"{self.code}: {self.message}{location}"
 
 
 @dataclass(frozen=True)
@@ -48,7 +59,7 @@ class ParsedSPass:
     warnings: list[SPassWarning] = field(default_factory=list)
 
     @property
-    def password_table(self) -> SPassTable | None:
+    def password_table(self) -> Optional[SPassTable]:
         return self.table("passwords")
 
     @property
@@ -56,7 +67,7 @@ class ParsedSPass:
         table = self.password_table
         return table.rows if table is not None else []
 
-    def table(self, table_type: str) -> SPassTable | None:
+    def table(self, table_type: str) -> Optional[SPassTable]:
         for table in self.tables:
             if table.type == table_type:
                 return table

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 from pathlib import Path
+from typing import Union
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, padding
@@ -27,7 +28,7 @@ class SPassDecryptor:
     def __init__(self, password: str):
         self.password = password
 
-    def decrypt_file(self, file_path: str | Path) -> str:
+    def decrypt_file(self, file_path: Union[str, Path]) -> str:
         path = Path(file_path)
         encrypted_data = self._read_base64_file(path)
         encrypted_bytes = self._decode_file_base64(encrypted_data)

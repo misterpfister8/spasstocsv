@@ -19,6 +19,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package
         run: python -m pip install -e .
+      - name: List CLI formats
+        run: spasstocsv --list-formats
       - name: Run unit tests
         run: python -m unittest
       - name: Compile wrapper
@@ -29,4 +31,17 @@ jobs:
             --password-stdin \
             -i tests/fixtures/demo_full.spass \
             -o /tmp/spasstocsv-demo.csv \
+            --format chrome
+      - name: Install build tooling
+        run: python -m pip install build
+      - name: Build wheel and sdist
+        run: python -m build
+      - name: Install built wheel
+        run: python -m pip install --force-reinstall dist/*.whl
+      - name: Installed CLI smoke test
+        run: |
+          printf 'demo-password\n' | spasstocsv \
+            --password-stdin \
+            -i tests/fixtures/demo_full.spass \
+            -o /tmp/spasstocsv-installed-demo.csv \
             --format chrome

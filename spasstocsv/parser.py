@@ -6,9 +6,10 @@ import base64
 import binascii
 import csv
 from io import StringIO
+from typing import Optional
 
 from spasstocsv.errors import SPassFormatError
-from spasstocsv.models import ParsedSPass, SPassTable, SPassWarning
+from spasstocsv.models import ParsedSPass, SPassTable, SPassWarning, WarningCode
 
 
 class SPassParser:
@@ -53,7 +54,26 @@ class SPassParser:
         tables = []
         for index, chunk in enumerate(table_chunks):
             table_type = cls._table_type_for_chunk(index, chunk, data_types)
+            if table_type.startswith("table_"):
+                warnings.append(
+                    SPassWarning(
+                        code=WarningCode.UNKNOWN_TABLE,
+                        message="Table type could not be inferred from flags or headers",
+                        table_number=index + 1,
+                        table_type=table_type,
+                    )
+                )
             tables.append(cls._parse_table(table_type, chunk, index + 1, strict, warnings))
+
+        password_table = next((table for table in tables if table.type == "passwords"), None)
+        if password_table is None or not password_table.rows:
+            warnings.append(
+                SPassWarning(
+                    code=WarningCode.EMPTY_PASSWORD_TABLE,
+                    message="No password rows were found",
+                    table_type="passwords",
+                )
+            )
 
         return ParsedSPass(
             version=version,
@@ -131,12 +151,10 @@ class SPassParser:
             return inferred
         if index < len(data_types):
             return data_types[index]
-        if not data_types and index < len(cls.DEFAULT_TABLE_TYPES):
-            return cls.DEFAULT_TABLE_TYPES[index]
         return f"table_{index + 1}"
 
     @classmethod
-    def _infer_table_type(cls, headers: list[str]) -> str | None:
+    def _infer_table_type(cls, headers: list[str]) -> Optional[str]:
         header_set = set(headers)
         for table_type, hints in cls.HEADER_TYPE_HINTS.items():
             if header_set.intersection(hints):
@@ -169,7 +187,8 @@ class SPassParser:
                 headers.extend(f"extra_{index}" for index in range(start, start + extra_count))
                 warnings.append(
                     SPassWarning(
-                        "Row had more fields than headers; extra columns were preserved",
+                        code=WarningCode.EXTRA_COLUMNS,
+                        message="Row had more fields than headers; extra columns were preserved",
                         table_number=table_number,
                         table_type=table_type,
                         row_number=row_number,
@@ -234,7 +253,8 @@ class SPassParser:
 
             warnings.append(
                 SPassWarning(
-                    "Field was not valid base64/UTF-8 and was kept as raw text",
+                    code=WarningCode.RAW_FIELD_FALLBACK,
+                    message="Field was not valid base64/UTF-8 and was kept as raw text",
                     table_number=table_number,
                     table_type=table_type,
                     row_number=row_number,

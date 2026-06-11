@@ -18,6 +18,8 @@ This tool is not affiliated with Samsung. Use it only with your own exports.
 - Runs fully locally; no network calls and no data collection
 - Supports `--password-stdin` for terminals and IDEs where hidden password input fails
 - Supports `--inspect` for safe metadata-only diagnostics
+- Supports stable warning codes for compatibility reports
+- Supports `--list-formats`, `--quiet`, and `--verbose`
 
 Default parsing is intentionally tolerant for real Samsung Pass variants. Use
 `--strict` when you want malformed fields to fail instead of being preserved as
@@ -95,10 +97,38 @@ printf 'your-export-password\n' | python3 spass_to_csv.py \
   -i /path/to/export.spass
 ```
 
+List supported formats without reading a password:
+
+```bash
+python3 spass_to_csv.py --list-formats
+```
+
 Strict parser mode:
 
 ```bash
 python3 spass_to_csv.py -i /path/to/export.spass --format chrome --strict
+```
+
+Quiet mode for scripts:
+
+```bash
+printf 'your-export-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  --quiet \
+  -i /path/to/export.spass \
+  -o passwords.csv \
+  --format chrome
+```
+
+Verbose warning details:
+
+```bash
+printf 'your-export-password\n' | python3 spass_to_csv.py \
+  --password-stdin \
+  --verbose \
+  -i /path/to/export.spass \
+  -o passwords.csv \
+  --format chrome
 ```
 
 Available formats:
@@ -154,6 +184,20 @@ Delete the demo output when done:
 ```bash
 rm /tmp/spasstocsv-demo.csv
 ```
+
+## Real Samsung Fake-Export Testing
+
+There is no committed real Samsung export in this repository. For compatibility
+testing, create fake entries on a Samsung device, export them from Samsung Pass,
+and place the `.spass` file under `private-fixtures/`.
+
+Read [REAL_EXPORT_TESTING.md](REAL_EXPORT_TESTING.md) before doing this. The
+short version:
+
+- Use only fake `example.com` entries.
+- Keep the `.spass` file local under `private-fixtures/`.
+- Run `--inspect --verbose` first and check that no values are printed.
+- Export only to `/tmp` during testing and delete plaintext outputs afterwards.
 
 ## Import Notes
 
@@ -226,6 +270,27 @@ The tests decrypt the synthetic `.spass` fixture, verify wrong-password failure,
 parse v25 and legacy layouts, compare CSV snapshots, validate Bitwarden JSON,
 verify `--inspect`, and run CLI exports for every format.
 
+Build package artifacts:
+
+```bash
+python3 -m pip install build
+python3 -m build
+```
+
+See [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) before tagging a release.
+
+## Warning Codes
+
+Diagnostics use stable non-secret warning codes:
+
+- `RAW_FIELD_FALLBACK` - a field was not valid base64/UTF-8 and was preserved as raw text.
+- `EXTRA_COLUMNS` - a row had more fields than the table header.
+- `UNKNOWN_TABLE` - a table type could not be inferred from flags or headers.
+- `EMPTY_PASSWORD_TABLE` - no password rows were found.
+
+Default output prints a warning summary. `--verbose` and `--inspect` print
+non-secret warning locations such as table, row, and field names.
+
 ## Troubleshooting
 
 `Error: Decryption failed - password is likely incorrect or file is corrupted`
@@ -237,7 +302,7 @@ verify `--inspect`, and run CLI exports for every format.
 
 - Use the original Samsung Pass export file.
 
-`Warnings: Field was not valid base64/UTF-8 and was kept as raw text`
+`Warnings: RAW_FIELD_FALLBACK`
 
 - Default mode preserved a field for compatibility with real-world variants.
 - Re-run with `--strict` if you want this to fail hard.

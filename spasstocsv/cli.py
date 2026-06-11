@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from getpass import getpass
 from pathlib import Path
+from typing import Optional
 
 from spasstocsv.crypto import SPassDecryptor
 from spasstocsv.errors import SPassError, SPassFormatError
@@ -18,7 +20,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Decrypt a Samsung Pass .spass export and convert it locally."
     )
-    parser.add_argument("-i", "--input", required=True, help="Path to the Samsung Pass .spass file")
+    parser.add_argument("-i", "--input", help="Path to the Samsung Pass .spass file")
     parser.add_argument(
         "-o",
         "--output",
@@ -47,6 +49,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print safe metadata only: version, table headers, row counts, and warnings.",
     )
+    parser.add_argument(
+        "--list-formats",
+        action="store_true",
+        help="List supported output formats and exit without reading a password.",
+    )
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Print only errors. Useful for scripts.",
+    )
+    verbosity.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print detailed non-secret warning locations.",
+    )
     return parser
 
 
@@ -67,10 +85,21 @@ def default_output_path(input_path: Path, format_name: str) -> Path:
     return input_path.with_name(f"{input_path.stem}_passwords.csv")
 
 
-def parse_export(input_path: Path, password: str, strict: bool) -> ParsedSPass:
-    print("Step 1/3: decrypting .spass export")
+def print_formats() -> None:
+    for format_name in sorted(CSVExporter.FORMATS):
+        description = CSVExporter.FORMAT_DESCRIPTIONS.get(format_name, "")
+        print(f"{format_name}\t{description}")
+
+
+def info(message: str, quiet: bool) -> None:
+    if not quiet:
+        print(message)
+
+
+def parse_export(input_path: Path, password: str, strict: bool, quiet: bool) -> ParsedSPass:
+    info("Step 1/3: decrypting .spass export", quiet)
     decrypted = SPassDecryptor(password).decrypt_file(input_path)
-    print("Step 2/3: parsing Samsung Pass tables")
+    info("Step 2/3: parsing Samsung Pass tables", quiet)
     return SPassParser.parse_decrypted_data(decrypted, strict=strict)
 
 
@@ -80,20 +109,34 @@ def print_inspection(parsed: ParsedSPass) -> None:
     for index, table in enumerate(parsed.tables, start=1):
         headers = ", ".join(table.headers)
         print(f"- {index}: {table.type} rows={len(table.rows)} headers=[{headers}]")
-    print_warnings(parsed)
+    print_warnings(parsed, detailed=True)
 
 
-def print_warnings(parsed: ParsedSPass) -> None:
+def print_warnings(parsed: ParsedSPass, detailed: bool = False) -> None:
     if not parsed.warnings:
         return
     print("Warnings:")
-    for warning in parsed.warnings:
-        print(f"- {warning.describe()}")
+    if detailed:
+        for warning in parsed.warnings:
+            print(f"- {warning.describe()}")
+        return
+
+    counts = Counter(warning.code for warning in parsed.warnings)
+    for code in sorted(counts):
+        print(f"- {code}: {counts[code]}")
+    print("Run again with --verbose or --inspect for non-secret warning details.")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+
+    if args.list_formats:
+        print_formats()
+        return 0
+
+    if not args.input:
+        parser.error("--input is required unless --list-formats is used")
 
     input_path = Path(args.input).expanduser()
     output_path = (
@@ -104,24 +147,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         password = read_password(args.password_stdin)
-        parsed = parse_export(input_path, password, strict=args.strict)
+        parsed = parse_export(input_path, password, strict=args.strict, quiet=args.quiet or args.inspect)
 
         if args.inspect:
             print_inspection(parsed)
             return 0
 
-        print(f"Step 3/3: writing {args.format} export")
+        info(f"Step 3/3: writing {args.format} export", args.quiet)
         count = CSVExporter.export(parsed, output_path, args.format)
     except (SPassError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    table_summary = ", ".join(f"{table.type}={len(table.rows)}" for table in parsed.tables)
-    print(f"Parsed Samsung Pass export version {parsed.version}: {table_summary}")
-    print_warnings(parsed)
-    print(f"Created {args.format} export at {output_path}")
-    print(f"Exported {count} item(s)")
-    print("Security: the output contains plaintext secrets. Delete it after import.")
+    if not args.quiet:
+        table_summary = ", ".join(f"{table.type}={len(table.rows)}" for table in parsed.tables)
+        print(f"Parsed Samsung Pass export version {parsed.version}: {table_summary}")
+        print_warnings(parsed, detailed=args.verbose)
+        print(f"Created {args.format} export: {output_path}")
+        print(f"Exported {count} item(s)")
+        print("Next: import the file, then delete the plaintext export.")
     return 0
 
 
