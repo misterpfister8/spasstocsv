@@ -2,6 +2,8 @@
 
 ## 0.3.0 - Unreleased
 
+- Export Samsung Pass cards in the `proton` format as Proton Pass `creditCard`
+  rows; the format now carries a leading `type` column.
 - Add stable warning codes for parser diagnostics.
 - Add `--list-formats`, `--quiet`, and `--verbose` CLI options.
 - Preserve unknown Samsung Pass fields as Bitwarden custom fields.

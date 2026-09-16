@@ -1,3 +1,4 @@
-name,url,username,password,note,totp
-Example Login,https://login.example.com,alice@example.com,not-a-real-password-1,Personal demo entry,otpauth://totp/Example:alice@example.com?secret=EXAMPLESECRET&issuer=Example
-Example Admin,https://admin.example.com,admin@example.com,not-a-real-password-2,,
+type,name,url,username,password,note,totp
+login,Example Login,https://login.example.com,alice@example.com,not-a-real-password-1,Personal demo entry,otpauth://totp/Example:alice@example.com?secret=EXAMPLESECRET&issuer=Example
+login,Example Admin,https://admin.example.com,admin@example.com,not-a-real-password-2,,
+creditCard,Demo User,,,,"{""cardholderName"": ""Demo User"", ""number"": ""4111111111111111"", ""verificationNumber"": ""123"", ""expirationDate"": ""2030-12"", ""pin"": """", ""note"": """"}",

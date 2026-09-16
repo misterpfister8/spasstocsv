@@ -13,7 +13,7 @@ This tool is not affiliated with Samsung. Use it only with your own exports.
 - Exports:
   - `raw` - decoded Samsung Pass password table fields
   - `chrome` - `name,url,username,password,note`
-  - `proton` - `name,url,username,password,note,totp`
+  - `proton` - `type,name,url,username,password,note,totp`, with logins and cards
   - `bitwarden-json` - Bitwarden JSON with logins, notes, cards, and identities
 - Runs fully locally; no network calls and no data collection
 - Supports `--password-stdin` for terminals and IDEs where hidden password input fails
@@ -214,7 +214,14 @@ Bitwarden:
 Proton Pass:
 
 - Use `--format proton`
-- Import as Generic CSV
+- In Proton Pass, import with `Proton Pass` selected as the source. `Generic CSV`
+  works too, but it skips header validation, so a malformed file fails silently.
+- Logins are exported as `type=login`, cards as `type=creditCard` with the card
+  fields as a JSON object in the `note` column, which is how Proton Pass reads
+  card items from CSV. Card expiry is formatted as `YYYY-MM`.
+- Proton's support pages still say cards cannot be imported. The CSV importer
+  does read them, but the behaviour is undocumented and may change. Verify a
+  single card before migrating a full export.
 
 1Password:
 

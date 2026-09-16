@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
 import subprocess
 import sys
@@ -158,15 +159,87 @@ class SPassConverterTests(unittest.TestCase):
     def test_export_snapshots(self) -> None:
         parsed = SPassParser.parse_decrypted_data(DEMO_DECRYPTED.read_text(encoding="utf-8"))
 
+        expected_counts = {"raw": 2, "chrome": 2, "proton": 3}
+
         for format_name in ("raw", "chrome", "proton"):
             with self.subTest(format=format_name):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     output = Path(tmpdir) / f"{format_name}.csv"
                     count = CSVExporter.export_passwords(parsed, output, format_name)
 
-                    self.assertEqual(count, 2)
+                    self.assertEqual(count, expected_counts[format_name])
                     expected = (FIXTURES / f"expected_{format_name}.csv").read_text(encoding="utf-8")
                     self.assertEqual(output.read_text(encoding="utf-8"), expected)
+
+    def test_proton_csv_exports_cards(self) -> None:
+        parsed = SPassParser.parse_decrypted_data(LEGACY_DECRYPTED.read_text(encoding="utf-8"))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "proton.csv"
+            CSVExporter.export(parsed, output, "proton")
+            with output.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+        card_rows = [row for row in rows if row["type"] == "creditCard"]
+        self.assertEqual(len(card_rows), 1)
+
+        card = json.loads(card_rows[0]["note"])
+        self.assertEqual(card["number"], "4111111111111111")
+        self.assertEqual(card["expirationDate"], "2026-12")
+        self.assertEqual(card["verificationNumber"], "123")
+        self.assertEqual(card_rows[0]["name"], "My Visa")
+        self.assertNotIn("reserved_5", card)
+        self.assertEqual(card_rows[0]["password"], "")
+
+    def test_proton_csv_omits_incomplete_card_expiry(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "true;true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value",
+                f"{b64('Login')};{b64('https://example.com')};{b64('user@example.com')};{b64('not-a-real-password')}",
+                "next_table",
+                "name_on_card;card_number;expiration_month;security_code",
+                f"{b64('Demo User')};{b64('4111111111111111')};{b64('12')};{b64('123')}",
+            ]
+        )
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "proton.csv"
+            CSVExporter.export(parsed, output, "proton")
+            with output.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+        card = json.loads(rows[-1]["note"])
+        self.assertEqual(card["expirationDate"], "")
+
+    def test_proton_csv_normalises_two_digit_card_year(self) -> None:
+        decrypted = "\n".join(
+            [
+                "25",
+                "true;true",
+                "false",
+                "next_table",
+                "title;host_url;username_value;password_value",
+                f"{b64('Login')};{b64('https://example.com')};{b64('user@example.com')};{b64('not-a-real-password')}",
+                "next_table",
+                "name_on_card;card_number;expiration_month;expiration_year;security_code",
+                f"{b64('Demo User')};{b64('4111111111111111')};{b64('7')};{b64('30')};{b64('123')}",
+            ]
+        )
+        parsed = SPassParser.parse_decrypted_data(decrypted)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "proton.csv"
+            CSVExporter.export(parsed, output, "proton")
+            with output.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+
+        card = json.loads(rows[-1]["note"])
+        self.assertEqual(card["expirationDate"], "2030-07")
 
     def test_bitwarden_json_contains_all_item_types(self) -> None:
         parsed = SPassParser.parse_decrypted_data(DEMO_DECRYPTED.read_text(encoding="utf-8"))

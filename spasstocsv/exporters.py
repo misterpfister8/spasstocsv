@@ -141,14 +141,73 @@ class ProtonCsvExporter(ChromeCsvExporter):
     """Export Proton Pass compatible Generic CSV."""
 
     format_name = "proton"
-    headers = ["name", "url", "username", "password", "note", "totp"]
+    headers = ["type", "name", "url", "username", "password", "note", "totp"]
 
     @classmethod
     def rows(cls, parsed: ParsedSPass) -> tuple[list[str], list[dict[str, str]]]:
         password_table = parsed.password_table
         if password_table is None:
             raise SPassFormatError("No password table found in the Samsung Pass export")
-        return cls.headers, [cls.mapped_password_row(entry, include_totp=True) for entry in password_table.rows]
+
+        rows = []
+        for entry in password_table.rows:
+            row = cls.mapped_password_row(entry, include_totp=True)
+            row["type"] = "login"
+            rows.append(row)
+        rows.extend(cls.card_rows(parsed.table("cards")))
+        return cls.headers, rows
+
+    @classmethod
+    def card_rows(cls, table: Optional[SPassTable]) -> list[dict[str, str]]:
+        """Build Proton Pass creditCard rows.
+
+        Proton Pass reads card items from the `note` column as a JSON object.
+        Only the known card fields are exported; Samsung internal columns such
+        as `reserved_*` are dropped so they do not end up as extra fields.
+        """
+        if table is None:
+            return []
+
+        rows = []
+        for entry in table.rows:
+            card = {
+                "cardholderName": cls.first_value(entry, "name_on_card", "cardholder_name"),
+                "number": cls.first_value(entry, "card_number", "number"),
+                "verificationNumber": cls.first_value(entry, "security_code", "cvv", "cvc"),
+                "expirationDate": cls.expiration_date(entry),
+                "pin": cls.first_value(entry, "card_pin", "pin"),
+                "note": cls.first_value(entry, "card_memo", "memo", "note", "notes"),
+            }
+            rows.append(
+                {
+                    "type": "creditCard",
+                    "name": cls.first_value(entry, "reserved_5", "card_name", "name_on_card") or "Card",
+                    "url": "",
+                    "username": "",
+                    "password": "",
+                    "note": json.dumps(card, ensure_ascii=False),
+                    "totp": "",
+                }
+            )
+        return rows
+
+    @classmethod
+    def expiration_date(cls, entry: dict[str, str]) -> str:
+        """Format the card expiry as YYYY-MM, the format the Proton Pass CSV importer reads.
+
+        Note that Proton's Bitwarden importer stores MMYYYY instead. The CSV
+        importer round-trips YYYY-MM, which is what their own export writes.
+        """
+        month = cls.first_value(entry, "expiration_month", "exp_month")
+        year = cls.first_value(entry, "expiration_year", "exp_year")
+        if not month.isdigit() or not year.isdigit():
+            return ""
+        # Samsung exports have been seen with both two- and four-digit years.
+        if len(year) == 2:
+            year = f"20{year}"
+        if len(year) != 4:
+            return ""
+        return f"{year}-{month.zfill(2)}"
 
 
 class BitwardenJsonExporter(BaseExporter):
@@ -340,7 +399,7 @@ class CSVExporter:
     FORMAT_DESCRIPTIONS = {
         "raw": "Decoded Samsung Pass password table CSV",
         "chrome": "Chrome/Edge password CSV: name,url,username,password,note",
-        "proton": "Proton Pass Generic CSV: name,url,username,password,note,totp",
+        "proton": "Proton Pass Generic CSV with logins and cards: type,name,url,username,password,note,totp",
         "bitwarden-json": "Bitwarden JSON with logins, notes, cards, and identities",
     }
     EXPORTERS = {
